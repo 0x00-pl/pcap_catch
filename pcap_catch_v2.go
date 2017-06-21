@@ -19,11 +19,24 @@ struct got_packet_args_t{
   void* callback;
   void* callback_args;
 };
-extern void gocallback(void* func, void* args, char *tcp_payload, int length, void* extra);
+extern void gocallback_payload(void* func, void* args, char *tcp_payload, int length, void* extra);
 static void call_gocallback(void* uargs, u_char *tcp_payload, int length, void* extra){
     struct got_packet_args_t* args = (struct got_packet_args_t*)uargs;
-    gocallback(args->callback, args->callback_args, tcp_payload, length, extra);
+    gocallback_payload(args->callback, args->callback_args, tcp_payload, length, extra);
 }
+
+extern void gocallback_http_header(void*, void*, char*, char*);
+static void go_print_http_header(void* go_func, const char *key, const char *val){
+    gocallback_http_header(go_func, NULL, (char*)key, (char*)val);
+}
+
+// key is NULL at first line.
+typedef void parse_line_cb(void* args, const char *key, const char *val);
+int http_header_parse(parse_line_cb callback, void* go_func, char* payload, int payload_len);
+static int http_header_parse_warp(void* go_func, char* payload, int payload_len){
+    http_header_parse(go_print_http_header, go_func, payload, payload_len);
+}
+
 
 typedef void tcp_callback_t(void* args, u_char *tcp_payload, int length, void* extra);
 void tcp_handler(struct cap_headers *headers, payload_cache_t *payload_cache, tcp_callback_t callback, void* args);
@@ -122,6 +135,9 @@ static void capture_n(int num_packets, const char *dev, const char *filter_exp,
     print_counter(&g_counter);
 }
 
+
+
+
 */
 import "C"
 
@@ -131,21 +147,41 @@ import (
 )
 
 
-//export gocallback
-func gocallback(f unsafe.Pointer, args unsafe.Pointer, tcp_payload *C.char, length C.int, extra unsafe.Pointer){
+
+//export gocallback_payload
+func gocallback_payload(f unsafe.Pointer, args unsafe.Pointer, tcp_payload *C.char, length C.int, extra unsafe.Pointer){
     (*(*func(unsafe.Pointer, *C.char, C.int, unsafe.Pointer))(unsafe.Pointer(&f)))(args, tcp_payload, length, extra)
 }
 
 
-
-func print_payload(args unsafe.Pointer, tcp_payload *C.char, length C.int, extra unsafe.Pointer){
-    fmt.Println(C.GoString(tcp_payload));
+//export gocallback_http_header
+func gocallback_http_header(f unsafe.Pointer, args unsafe.Pointer, key *C.char, val *C.char){
+    (*(*func(unsafe.Pointer, *C.char, *C.char))(unsafe.Pointer(&f)))(args, key, val)
 }
+
+
+func print_http_header(args unsafe.Pointer, key *C.char, val *C.char){
+    if(key == nil){
+       fmt.Println(C.GoString(val))
+    }else{
+       fmt.Println(C.GoString(key)+":"+C.GoString(val))
+    }
+}
+
+
+var print_http_header_cb = print_http_header
+func print_payload(args unsafe.Pointer, tcp_payload *C.char, length C.int, extra unsafe.Pointer){
+    // fmt.Println(C.GoString(tcp_payload));
+    fmt.Println("\n===got package===")
+    cb := (*(*unsafe.Pointer)(unsafe.Pointer(&print_http_header_cb)))
+    C.http_header_parse_warp(cb, tcp_payload, length)
+}
+
 
 var print_payload_cb = print_payload
 func main() {
   cb := (*(*unsafe.Pointer)(unsafe.Pointer(&print_payload_cb)))
-  C.capture_n(10, nil, nil, cb, nil)
+  C.capture_n(10, nil, C.CString("((ip[2:2]>80) and (tcp[13]&16!=0) and (tcp dst port 80))"), cb, nil)
 }
 
 
